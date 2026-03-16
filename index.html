@@ -1629,29 +1629,241 @@
           })(i * 90);
       }
 
-      // ─── VR ──────────────────────────────────────────────────────────
+      // ─── VR / DEVICE DETECTION ───────────────────────────────────────
+      var isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+      var isAndroid = /Android/.test(navigator.userAgent);
+      var isMobile = isIOS || isAndroid;
+
+      // Update VR button text based on device
+      (function () {
+        var btn = document.getElementById("vrbtn");
+        if (!btn) return;
+        if (isIOS) btn.textContent = "🥽 VR (iOS)";
+        else if (isAndroid) btn.textContent = "🥽 VR";
+        else btn.textContent = "🥽 MODO VR";
+      })();
+
+      // Gyroscope state for mobile look
+      var gyroEnabled = false;
+      var alphaOffset = 0;
+      var lastAlpha = 0,
+        lastBeta = 0,
+        lastGamma = 0;
+
+      function enableGyro() {
+        window.addEventListener(
+          "deviceorientation",
+          function (e) {
+            if (!gyroEnabled) return;
+            if (e.alpha === null) return;
+            // Convert device orientation to camera angles
+            // Beta  = tilt forward/back (-90 to 90) → pitch
+            // Alpha = compass heading (0-360) → yaw (with offset)
+            var beta = (e.beta * Math.PI) / 180; // up/down
+            var alpha = (e.alpha * Math.PI) / 180; // left/right heading
+            var gamma = (e.gamma * Math.PI) / 180; // roll (ignored)
+            camPitch = Math.max(-1.2, Math.min(1.2, -(beta - Math.PI / 2)));
+            camYaw = -(alpha - alphaOffset);
+            lastAlpha = e.alpha;
+            lastBeta = e.beta;
+            lastGamma = e.gamma;
+          },
+          true,
+        );
+        gyroEnabled = true;
+      }
+
+      function requestIOSGyro(callback) {
+        if (
+          typeof DeviceOrientationEvent !== "undefined" &&
+          typeof DeviceOrientationEvent.requestPermission === "function"
+        ) {
+          // iOS 13+ requires explicit permission
+          DeviceOrientationEvent.requestPermission()
+            .then(function (state) {
+              if (state === "granted") {
+                enableGyro();
+                callback(true);
+              } else {
+                callback(false);
+              }
+            })
+            .catch(function () {
+              callback(false);
+            });
+        } else {
+          // Android or older iOS — no permission needed
+          enableGyro();
+          callback(true);
+        }
+      }
+
+      // Show mobile VR instructions panel (canvas on camera)
+      function showMobileVRInstructions() {
+        showToast(
+          "VR Movil activo!",
+          "Mueve la cabeza para mirar | Toca pantalla para voltear carta",
+          "#f5d76e",
+        );
+        // Touch to flip card on mobile
+        renderer.domElement.addEventListener(
+          "touchend",
+          function (e) {
+            e.preventDefault();
+            AC();
+            startMusic();
+            var idx = getHitCard();
+            if (idx >= 0) {
+              onCard(idx);
+              return;
+            }
+            if (getHitBtn()) {
+              restart();
+            }
+          },
+          { passive: false },
+        );
+      }
+
       function doVR() {
-        if (!navigator.xr) {
-          alert("WebXR no disponible");
+        AC();
+        // ── Option 1: WebXR (Quest, modern browsers) ──────────────────
+        if (navigator.xr) {
+          navigator.xr
+            .isSessionSupported("immersive-vr")
+            .then(function (ok) {
+              if (ok) {
+                navigator.xr
+                  .requestSession("immersive-vr", {
+                    optionalFeatures: ["local-floor", "bounded-floor"],
+                  })
+                  .then(function (s) {
+                    renderer.xr.setSession(s);
+                  })
+                  .catch(function (err) {
+                    console.warn("XR session failed:", err);
+                    tryMobileVR();
+                  });
+              } else {
+                tryMobileVR();
+              }
+            })
+            .catch(function () {
+              tryMobileVR();
+            });
           return;
         }
-        navigator.xr.isSessionSupported("immersive-vr").then(function (ok) {
-          if (ok)
-            navigator.xr
-              .requestSession("immersive-vr", {
-                optionalFeatures: ["local-floor"],
-              })
-              .then(function (s) {
-                renderer.xr.setSession(s);
-              });
-          else alert("VR no disponible en este dispositivo");
+        // ── Option 2: No WebXR → mobile gyro fallback ─────────────────
+        tryMobileVR();
+      }
+
+      function tryMobileVR() {
+        if (!isMobile) {
+          showToast(
+            "VR no disponible",
+            "Usa un navegador compatible o Meta Quest",
+            "#ff5555",
+          );
+          return;
+        }
+        // Set stereoscopic split-screen mode
+        enableStereo();
+        // Request gyro permission (iOS requires user gesture)
+        requestIOSGyro(function (granted) {
+          if (granted) {
+            // Set alpha offset so current heading = forward
+            alphaOffset = lastAlpha;
+            showMobileVRInstructions();
+          } else {
+            showToast(
+              "Permiso denegado",
+              "Activa el giroscopio en Ajustes del navegador",
+              "#ff5555",
+            );
+            disableStereo();
+          }
         });
       }
+
+      // ─── STEREOSCOPIC SIDE-BY-SIDE MODE (for Cardboard/phone lenses) ─
+      var stereoMode = false;
+      var stereoRT = null; // render target for left eye
+
+      function enableStereo() {
+        stereoMode = true;
+        // Hide 2D HTML, show stereo canvas
+        ["xhair", "gw", "vrbtn", "mubtn", "hint"].forEach(function (id) {
+          var el = document.getElementById(id);
+          if (el) el.style.display = "none";
+        });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        // Show stereo indicator
+        var ind = document.createElement("div");
+        ind.id = "stereo-ind";
+        ind.style.cssText =
+          "position:fixed;top:8px;left:50%;transform:translateX(-50%);" +
+          "background:rgba(8,4,0,.85);border:1px solid #c9a227;color:#f5d76e;" +
+          "padding:5px 14px;border-radius:8px;font-size:11px;z-index:500;pointer-events:none;";
+        ind.textContent =
+          "👓 Modo VR Cardboard activo — Pon el celular en tus lentes";
+        document.body.appendChild(ind);
+        showToast(
+          "Stereo activado!",
+          "Pon el celular en tus lentes",
+          "#f5d76e",
+        );
+      }
+
+      function disableStereo() {
+        stereoMode = false;
+        ["xhair", "gw", "vrbtn", "mubtn", "hint"].forEach(function (id) {
+          var el = document.getElementById(id);
+          if (el) el.style.display = "";
+        });
+        var ind = document.getElementById("stereo-ind");
+        if (ind) ind.remove();
+      }
+
+      // ─── STEREO RENDER (side-by-side for Cardboard) ──────────────────
+      function renderStereo() {
+        var W = renderer.domElement.width;
+        var H = renderer.domElement.height;
+        var halfW = Math.floor(W / 2);
+        var ipd = 0.064; // interpupillary distance in meters
+
+        renderer.setScissorTest(true);
+
+        // Left eye
+        var leftCam = camera.clone();
+        leftCam.position.x -= ipd / 2;
+        renderer.setViewport(0, 0, halfW, H);
+        renderer.setScissor(0, 0, halfW, H);
+        renderer.render(scene, leftCam);
+
+        // Right eye
+        var rightCam = camera.clone();
+        rightCam.position.x += ipd / 2;
+        renderer.setViewport(halfW, 0, halfW, H);
+        renderer.setScissor(halfW, 0, halfW, H);
+        renderer.render(scene, rightCam);
+
+        renderer.setScissorTest(false);
+        renderer.setViewport(0, 0, W, H);
+      }
+
       renderer.xr.addEventListener("sessionstart", function () {
         ["xhair", "gw", "vrbtn", "mubtn", "hint"].forEach(function (id) {
           var el = document.getElementById(id);
           if (el) el.style.display = "none";
         });
+        AC();
+        startMusic();
+        setupControllers();
+        showToast(
+          "Quest listo!",
+          "Joystick izq=mover | Der=girar | Trigger=voltear",
+          "#f5d76e",
+        );
       });
       renderer.xr.addEventListener("sessionend", function () {
         ["xhair", "gw", "vrbtn", "mubtn", "hint"].forEach(function (id) {
@@ -1660,6 +1872,119 @@
         });
       });
 
+      // ─── QUEST CONTROLLERS ───────────────────────────────────────────
+      var ctrlLeft = null,
+        ctrlRight = null,
+        ctrlLineR = null;
+      var snapCooldown = 0;
+
+      // Teleport marker
+      var teleportMarker = new THREE.Mesh(
+        new THREE.RingGeometry(0.25, 0.32, 32),
+        new THREE.MeshBasicMaterial({
+          color: 0xffcc44,
+          transparent: true,
+          opacity: 0.75,
+          side: THREE.DoubleSide,
+        }),
+      );
+      teleportMarker.rotation.x = -Math.PI / 2;
+      teleportMarker.visible = false;
+      scene.add(teleportMarker);
+      var teleportTarget = new THREE.Vector3();
+      var teleportAiming = false;
+
+      function setupControllers() {
+        ctrlLeft = renderer.xr.getController(0);
+        ctrlRight = renderer.xr.getController(1);
+        rig.add(ctrlLeft);
+        rig.add(ctrlRight);
+
+        // Laser line on right controller
+        var lineGeo = new THREE.BufferGeometry().setFromPoints([
+          new THREE.Vector3(0, 0, 0),
+          new THREE.Vector3(0, 0, -6),
+        ]);
+        ctrlLineR = new THREE.Line(
+          lineGeo,
+          new THREE.LineBasicMaterial({
+            color: 0xf5d76e,
+            transparent: true,
+            opacity: 0.5,
+          }),
+        );
+        ctrlRight.add(ctrlLineR);
+
+        // Grip dots so you can see the controllers
+        var gGeo = new THREE.SphereGeometry(0.022, 8, 8);
+        var gMat = new THREE.MeshBasicMaterial({ color: 0xc9a227 });
+        ctrlLeft.add(new THREE.Mesh(gGeo, gMat));
+        ctrlRight.add(
+          new THREE.Mesh(
+            gGeo,
+            new THREE.MeshBasicMaterial({ color: 0xf5d76e }),
+          ),
+        );
+
+        // RIGHT TRIGGER (select) = flip card or confirm teleport
+        ctrlRight.addEventListener("selectstart", function () {
+          AC();
+          if (teleportAiming && teleportMarker.visible) {
+            rig.position.x = teleportTarget.x;
+            rig.position.z = teleportTarget.z;
+            rig.position.y = 1.6;
+            teleportMarker.visible = false;
+            teleportAiming = false;
+            beep(660, "sine", 0.1, 0.15);
+            return;
+          }
+          var idx = getRayHitCard();
+          if (idx >= 0) {
+            onCard(idx);
+            return;
+          }
+          if (getRayHitBtn()) {
+            restart();
+          }
+        });
+      }
+
+      // Raycaster from right controller
+      var ctrlRC = new THREE.Raycaster();
+      var cROrg = new THREE.Vector3();
+      var cRDir = new THREE.Vector3();
+      function ctrlRay() {
+        if (!ctrlRight) return false;
+        ctrlRight.getWorldPosition(cROrg);
+        ctrlRight.getWorldDirection(cRDir);
+        cRDir.negate();
+        ctrlRC.set(cROrg, cRDir);
+        return true;
+      }
+      function getRayHitCard() {
+        if (!ctrlRay()) return -1;
+        var meshes = G.cards
+          .filter(function (c) {
+            return !c.matched && !c.flipped;
+          })
+          .map(function (c) {
+            return c.hit;
+          });
+        var hits = ctrlRC.intersectObjects(meshes);
+        return hits.length > 0 ? hits[0].object.userData.cardIndex : -1;
+      }
+      function getRayHitBtn() {
+        if (!ctrlRay()) return false;
+        var btns = [];
+        winPanel.children.forEach(function (c) {
+          if (c.userData.isRestartBtn) btns.push(c);
+        });
+        overPanel.children.forEach(function (c) {
+          if (c.userData.isRestartBtn) btns.push(c);
+        });
+        return ctrlRC.intersectObjects(btns).length > 0;
+      }
+
       // ─── GAZE ────────────────────────────────────────────────────────
       var GAZE_T = 0.6;
       var gazeIdx = -1,
@@ -1667,6 +1992,7 @@
       var gazeArc2D = document.getElementById("ga");
       var xhRing = document.getElementById("xr");
       var ARC_C = Math.PI * 2 * 22;
+      var DEAD = 0.25; // thumbstick deadzone
 
       // ─── ANIMATION LOOP ──────────────────────────────────────────────
       var clock = new THREE.Clock();
@@ -1678,55 +2004,143 @@
       renderer.setAnimationLoop(function () {
         var dt = Math.min(clock.getDelta(), 0.05);
         var t = clock.getElapsedTime();
+        var inVR = renderer.xr.isPresenting;
 
-        // Camera
-        rig.rotation.y = camYaw;
-        camera.rotation.x = camPitch;
-
-        // WASD
-        var spd = 4 * dt;
-        fwd.set(0, 0, -1).applyEuler(new THREE.Euler(0, camYaw, 0));
-        rgt.set(1, 0, 0).applyEuler(new THREE.Euler(0, camYaw, 0));
-        moveDir.set(0, 0, 0);
-        if (keys.KeyW || keys.ArrowUp) moveDir.add(fwd);
-        if (keys.KeyS || keys.ArrowDown) moveDir.sub(fwd);
-        if (keys.KeyA || keys.ArrowLeft) moveDir.sub(rgt);
-        if (keys.KeyD || keys.ArrowRight) moveDir.add(rgt);
-        if (moveDir.lengthSq() > 0) {
-          moveDir.normalize().multiplyScalar(spd);
-          rig.position.add(moveDir);
-          rig.position.x = Math.max(-20, Math.min(20, rig.position.x));
-          rig.position.z = Math.max(-20, Math.min(8, rig.position.z));
-          rig.position.y = 1.6;
-          stepTimer += dt;
-          if (stepTimer > 0.4) {
-            stepTimer = 0;
-            beep(70, "sine", 0.04, 0.04);
+        // ── Desktop camera & WASD ────────────────────────────────────
+        if (!inVR) {
+          rig.rotation.y = camYaw;
+          camera.rotation.x = camPitch;
+          var spd = 4 * dt;
+          fwd.set(0, 0, -1).applyEuler(new THREE.Euler(0, camYaw, 0));
+          rgt.set(1, 0, 0).applyEuler(new THREE.Euler(0, camYaw, 0));
+          moveDir.set(0, 0, 0);
+          if (keys.KeyW || keys.ArrowUp) moveDir.add(fwd);
+          if (keys.KeyS || keys.ArrowDown) moveDir.sub(fwd);
+          if (keys.KeyA || keys.ArrowLeft) moveDir.sub(rgt);
+          if (keys.KeyD || keys.ArrowRight) moveDir.add(rgt);
+          if (moveDir.lengthSq() > 0) {
+            moveDir.normalize().multiplyScalar(spd);
+            rig.position.add(moveDir);
+            rig.position.x = Math.max(-20, Math.min(20, rig.position.x));
+            rig.position.z = Math.max(-20, Math.min(8, rig.position.z));
+            rig.position.y = 1.6;
+            stepTimer += dt;
+            if (stepTimer > 0.4) {
+              stepTimer = 0;
+              beep(70, "sine", 0.04, 0.04);
+            }
           }
         }
 
-        // Gaze
+        // ── Quest controller thumbsticks ──────────────────────────────
+        if (inVR) {
+          var session = renderer.xr.getSession();
+          if (session && session.inputSources) {
+            for (var si = 0; si < session.inputSources.length; si++) {
+              var src = session.inputSources[si];
+              if (!src.gamepad) continue;
+              var axes = src.gamepad.axes;
+              // Quest axes layout: [0]=touchpad x,[1]=touchpad y,[2]=thumbstick x,[3]=thumbstick y
+              var ax = axes.length > 2 ? axes[2] : axes[0] || 0;
+              var ay = axes.length > 3 ? axes[3] : axes[1] || 0;
+
+              if (src.handedness === "left") {
+                // Left thumbstick = walk (follow head direction)
+                if (Math.abs(ax) > DEAD || Math.abs(ay) > DEAD) {
+                  var hq = camera.getWorldQuaternion(new THREE.Quaternion());
+                  var hfwd = new THREE.Vector3(0, 0, -1).applyQuaternion(hq);
+                  hfwd.y = 0;
+                  hfwd.normalize();
+                  var hrgt = new THREE.Vector3(1, 0, 0).applyQuaternion(hq);
+                  hrgt.y = 0;
+                  hrgt.normalize();
+                  var ws = 3.5 * dt;
+                  if (Math.abs(ay) > DEAD)
+                    rig.position.addScaledVector(hfwd, -ay * ws);
+                  if (Math.abs(ax) > DEAD)
+                    rig.position.addScaledVector(hrgt, ax * ws);
+                  rig.position.x = Math.max(-20, Math.min(20, rig.position.x));
+                  rig.position.z = Math.max(-20, Math.min(8, rig.position.z));
+                  rig.position.y = 1.6;
+                  stepTimer += dt;
+                  if (stepTimer > 0.4) {
+                    stepTimer = 0;
+                    beep(70, "sine", 0.04, 0.03);
+                  }
+                }
+              }
+
+              if (src.handedness === "right") {
+                // Right thumbstick X = snap turn 30 deg
+                snapCooldown -= dt;
+                if (Math.abs(ax) > 0.65 && snapCooldown <= 0) {
+                  rig.rotation.y -= Math.sign(ax) * (Math.PI / 6);
+                  snapCooldown = 0.35;
+                  beep(440, "sine", 0.04, 0.08);
+                }
+                // Right thumbstick forward (ay < -0.7) = aim teleport
+                if (ay < -0.65) {
+                  if (ctrlRay()) {
+                    var floorPlane = new THREE.Plane(
+                      new THREE.Vector3(0, 1, 0),
+                      0,
+                    );
+                    var hitPt = new THREE.Vector3();
+                    if (ctrlRC.ray.intersectPlane(floorPlane, hitPt)) {
+                      if (
+                        hitPt.z > -21 &&
+                        hitPt.z < 9 &&
+                        Math.abs(hitPt.x) < 21
+                      ) {
+                        teleportTarget.copy(hitPt);
+                        teleportMarker.position.set(hitPt.x, 0.01, hitPt.z);
+                        teleportMarker.visible = true;
+                        teleportAiming = true;
+                      }
+                    }
+                  }
+                } else if (teleportAiming) {
+                  // Stick released after aiming = teleport
+                  if (teleportMarker.visible) {
+                    rig.position.x = teleportTarget.x;
+                    rig.position.z = teleportTarget.z;
+                    rig.position.y = 1.6;
+                    beep(660, "sine", 0.1, 0.15);
+                  }
+                  teleportMarker.visible = false;
+                  teleportAiming = false;
+                }
+              }
+            }
+          }
+
+          // Controller laser color feedback
+          if (ctrlRight && ctrlLineR) {
+            var rHit = getRayHitCard() >= 0 || getRayHitBtn();
+            ctrlLineR.material.color.set(rHit ? 0xffcc44 : 0xf5d76e);
+            ctrlLineR.material.opacity = rHit ? 0.9 : 0.35;
+          }
+        }
+
+        // ── Gaze (head center ray, works desktop + VR) ───────────────
         var hovCard = getHitCard();
         var hovBtn =
-          !G.locked && (winPanel.visible || overPanel.visible)
-            ? getHitBtn()
-            : false;
-        var hovTarget = hovCard >= 0 ? hovCard : hovBtn ? "btn" : -1;
+          winPanel.visible || overPanel.visible ? getHitBtn() : false;
+        var hovAny = hovCard >= 0 || hovBtn;
 
-        if ((hovTarget !== -1 && !G.locked) || hovBtn) {
-          if (String(hovTarget) !== String(gazeIdx)) {
+        if (hovAny) {
+          var hovKey = hovCard >= 0 ? String(hovCard) : "btn";
+          if (hovKey !== String(gazeIdx)) {
             gazeTimer = 0;
-            gazeIdx = hovTarget;
+            gazeIdx = hovKey;
           }
           gazeTimer += dt;
           var pct = Math.min(gazeTimer / GAZE_T, 1);
-          // 2D arc
           gazeArc2D &&
             gazeArc2D.setAttribute(
               "stroke-dasharray",
               pct * ARC_C + " " + ARC_C,
             );
-          // 3D gaze ring rebuild
           gazeRingM.geometry.dispose();
           gazeRingM.geometry = new THREE.RingGeometry(
             0.022,
@@ -1740,7 +2154,6 @@
           ringM.material.color.set(0xffcc44);
           dotM.material.color.set(0xffcc44);
           xhRing && xhRing.setAttribute("stroke", "#ffcc44");
-
           if (gazeTimer >= GAZE_T) {
             gazeTimer = 0;
             gazeIdx = -1;
@@ -1791,6 +2204,10 @@
           toastMesh.material.opacity = Math.min(1, toastTimer * 0.5);
         }
 
+        // Teleport marker pulse
+        if (teleportMarker.visible)
+          teleportMarker.material.opacity = 0.5 + Math.sin(t * 7) * 0.25;
+
         // Sparkles
         sparkles.forEach(function (sp) {
           sp.position.y = sp._base.y + Math.sin(t * sp._sp + sp._ph) * 0.12;
@@ -1809,7 +2226,6 @@
           }
           c.hoverOff += (c.hoverTarget - c.hoverOff) * 0.15;
           if (!c._dropping) c.grp.position.y = c.basePos.y + c.hoverOff;
-
           if (Math.abs(c.flipAngle - c.flipTarget) > 0.004) {
             c.flipAngle += (c.flipTarget - c.flipAngle) * 0.22;
             c.grp.rotation.z = c.flipAngle;
@@ -1835,7 +2251,11 @@
           }
         });
 
-        renderer.render(scene, camera);
+        if (stereoMode) {
+          renderStereo();
+        } else {
+          renderer.render(scene, camera);
+        }
       });
 
       // ─── INIT ────────────────────────────────────────────────────────
