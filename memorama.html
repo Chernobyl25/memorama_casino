@@ -1,0 +1,1851 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Casino Memorama VR</title>
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+      body {
+        background: #000;
+        overflow: hidden;
+      }
+      canvas {
+        display: block;
+      }
+      #xhair {
+        position: fixed;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        width: 44px;
+        height: 44px;
+        pointer-events: none;
+        z-index: 500;
+      }
+      #xhair svg {
+        width: 100%;
+        height: 100%;
+      }
+      #gw {
+        position: fixed;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        width: 64px;
+        height: 64px;
+        pointer-events: none;
+        z-index: 499;
+      }
+      #ga {
+        stroke-dasharray: 0 138;
+        transition: none;
+      }
+      #vrbtn {
+        position: fixed;
+        bottom: 18px;
+        right: 18px;
+        z-index: 300;
+        background: linear-gradient(135deg, #1a0a00, #3a1a00);
+        border: 2px solid #c9a227;
+        color: #f5d76e;
+        padding: 10px 18px;
+        border-radius: 12px;
+        font-size: 13px;
+        cursor: pointer;
+        letter-spacing: 2px;
+        box-shadow: 0 0 14px rgba(201, 162, 39, 0.4);
+      }
+      #mubtn {
+        position: fixed;
+        bottom: 18px;
+        right: 150px;
+        z-index: 300;
+        background: linear-gradient(135deg, #1a0a00, #3a1a00);
+        border: 2px solid #c9a227;
+        color: #f5d76e;
+        padding: 10px 14px;
+        border-radius: 12px;
+        font-size: 13px;
+        cursor: pointer;
+        box-shadow: 0 0 14px rgba(201, 162, 39, 0.4);
+      }
+      #hint {
+        position: fixed;
+        bottom: 18px;
+        left: 18px;
+        z-index: 200;
+        pointer-events: none;
+        background: rgba(8, 4, 0, 0.82);
+        border: 1px solid rgba(201, 162, 39, 0.3);
+        color: rgba(245, 215, 110, 0.65);
+        padding: 8px 14px;
+        border-radius: 10px;
+        font-size: 11px;
+        line-height: 1.9;
+      }
+      .coins {
+        position: fixed;
+        inset: 0;
+        pointer-events: none;
+        overflow: hidden;
+        z-index: 150;
+      }
+      .coin {
+        position: absolute;
+        font-size: 24px;
+        top: -50px;
+        animation: fall linear forwards;
+      }
+      @keyframes fall {
+        0% {
+          transform: translateY(0) rotate(0);
+          opacity: 1;
+        }
+        100% {
+          transform: translateY(110vh) rotate(720deg);
+          opacity: 0;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div id="xhair">
+      <svg viewBox="0 0 44 44">
+        <circle
+          id="xr"
+          cx="22"
+          cy="22"
+          r="7"
+          fill="none"
+          stroke="#f5d76e"
+          stroke-width="1.5"
+          opacity=".9"
+        />
+        <line
+          x1="22"
+          y1="2"
+          x2="22"
+          y2="12"
+          stroke="#f5d76e"
+          stroke-width="1"
+          opacity=".6"
+        />
+        <line
+          x1="22"
+          y1="32"
+          x2="22"
+          y2="42"
+          stroke="#f5d76e"
+          stroke-width="1"
+          opacity=".6"
+        />
+        <line
+          x1="2"
+          y1="22"
+          x2="12"
+          y2="22"
+          stroke="#f5d76e"
+          stroke-width="1"
+          opacity=".6"
+        />
+        <line
+          x1="32"
+          y1="22"
+          x2="42"
+          y2="22"
+          stroke="#f5d76e"
+          stroke-width="1"
+          opacity=".6"
+        />
+        <circle cx="22" cy="22" r="1.5" fill="#f5d76e" opacity=".9" />
+      </svg>
+    </div>
+    <div id="gw">
+      <svg viewBox="0 0 50 50">
+        <circle
+          id="ga"
+          cx="25"
+          cy="25"
+          r="22"
+          fill="none"
+          stroke="#ffcc44"
+          stroke-width="3"
+          stroke-linecap="round"
+          transform="rotate(-90 25 25)"
+          opacity=".9"
+        />
+      </svg>
+    </div>
+    <button id="vrbtn" onclick="doVR()">VR</button>
+    <button id="mubtn" onclick="toggleMusic()">MUSICA</button>
+    <div id="hint">WASD = mover | Arrastrar = mirar | Mira carta 0.6s</div>
+    <div class="coins" id="coins"></div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script>
+      // ─── AUDIO ───────────────────────────────────────────────────────
+      var actx,
+        musicGain,
+        musicOn = true,
+        ambiStarted = false;
+      function AC() {
+        if (!actx)
+          actx = new (window.AudioContext || window.webkitAudioContext)();
+        if (actx.state === "suspended") actx.resume();
+        return actx;
+      }
+      function beep(f, t, d, v, dl) {
+        var c = AC(),
+          o = c.createOscillator(),
+          g = c.createGain();
+        o.connect(g);
+        g.connect(c.destination);
+        o.type = t;
+        o.frequency.value = f;
+        var ts = c.currentTime + (dl || 0);
+        g.gain.setValueAtTime(v || 0.3, ts);
+        g.gain.exponentialRampToValueAtTime(0.001, ts + d);
+        o.start(ts);
+        o.stop(ts + d);
+      }
+      var sfx = {
+        flip: function () {
+          beep(620, "sine", 0.1, 0.28);
+          beep(310, "sine", 0.07, 0.13, 0.06);
+        },
+        match: function () {
+          [523, 659, 784, 1047].forEach(function (f, i) {
+            beep(f, "sine", 0.32, 0.38, i * 0.1);
+          });
+        },
+        miss: function () {
+          [200, 175, 155].forEach(function (f, i) {
+            beep(f, "sawtooth", 0.16, 0.2, i * 0.08);
+          });
+        },
+        win: function () {
+          [523, 659, 784, 659, 784, 1047, 1047, 1319].forEach(function (f, i) {
+            beep(f, i % 2 ? "triangle" : "sine", 0.38, 0.42, i * 0.13);
+          });
+        },
+      };
+      function startMusic() {
+        if (ambiStarted) return;
+        ambiStarted = true;
+        var c = AC();
+        musicGain = c.createGain();
+        musicGain.gain.value = 0;
+        musicGain.connect(c.destination);
+        musicGain.gain.linearRampToValueAtTime(0.15, c.currentTime + 3);
+
+        // Drone
+        var dr = c.createOscillator(),
+          dg = c.createGain();
+        var dlfo = c.createOscillator(),
+          dlg = c.createGain();
+        dlfo.frequency.value = 0.25;
+        dlg.gain.value = 6;
+        dlfo.connect(dlg);
+        dlg.connect(dr.frequency);
+        dr.type = "sine";
+        dr.frequency.value = 55;
+        dg.gain.value = 0.08;
+        dr.connect(dg);
+        dg.connect(musicGain);
+        dr.start();
+        dlfo.start();
+
+        // Bass line
+        var bassNotes = [
+          55, 55, 65, 55, 49, 49, 58, 49, 52, 52, 62, 52, 58, 58, 55, 58,
+        ];
+        var bi = 0;
+        function tickBass() {
+          var o = c.createOscillator(),
+            g = c.createGain();
+          o.type = "triangle";
+          o.frequency.value = bassNotes[bi++ % bassNotes.length];
+          var t = c.currentTime;
+          g.gain.setValueAtTime(0.15, t);
+          g.gain.exponentialRampToValueAtTime(0.001, t + 0.27);
+          o.connect(g);
+          g.connect(musicGain);
+          o.start(t);
+          o.stop(t + 0.3);
+          setTimeout(tickBass, 320);
+        }
+        setTimeout(tickBass, 400);
+
+        // Chord stabs
+        var chords = [
+          [220, 277, 330],
+          [196, 247, 311],
+          [208, 262, 330],
+          [233, 293, 349],
+        ];
+        var ci2 = 0;
+        function tickChord() {
+          chords[ci2++ % chords.length].forEach(function (f) {
+            var o = c.createOscillator(),
+              g = c.createGain();
+            o.type = "triangle";
+            o.frequency.value = f;
+            var t = c.currentTime;
+            g.gain.setValueAtTime(0, t);
+            g.gain.linearRampToValueAtTime(0.05, t + 0.04);
+            g.gain.exponentialRampToValueAtTime(0.001, t + 0.5);
+            o.connect(g);
+            g.connect(musicGain);
+            o.start(t);
+            o.stop(t + 0.55);
+          });
+          setTimeout(tickChord, 1280);
+        }
+        setTimeout(tickChord, 600);
+
+        // Hi-hat
+        var hhPat = [1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 1, 1, 0, 1, 0];
+        var hhi = 0;
+        function tickHH() {
+          if (hhPat[hhi++ % hhPat.length]) {
+            var buf = c.createBuffer(1, c.sampleRate * 0.034, c.sampleRate);
+            var dd = buf.getChannelData(0);
+            for (var i = 0; i < dd.length; i++)
+              dd[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / dd.length, 2);
+            var s = c.createBufferSource(),
+              g = c.createGain(),
+              f = c.createBiquadFilter();
+            f.type = "highpass";
+            f.frequency.value = 8000;
+            s.buffer = buf;
+            g.gain.value = 0.05;
+            s.connect(f);
+            f.connect(g);
+            g.connect(musicGain);
+            s.start();
+          }
+          setTimeout(tickHH, 160);
+        }
+        setTimeout(tickHH, 800);
+
+        // Kick drum
+        var kickPat = [1, 0, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 1, 0];
+        var ki = 0;
+        function tickKick() {
+          if (kickPat[ki++ % kickPat.length]) {
+            var o = c.createOscillator(),
+              g = c.createGain();
+            o.type = "sine";
+            o.frequency.setValueAtTime(150, c.currentTime);
+            o.frequency.exponentialRampToValueAtTime(40, c.currentTime + 0.08);
+            g.gain.setValueAtTime(0.4, c.currentTime);
+            g.gain.exponentialRampToValueAtTime(0.001, c.currentTime + 0.22);
+            o.connect(g);
+            g.connect(musicGain);
+            o.start();
+            o.stop(c.currentTime + 0.25);
+          }
+          setTimeout(tickKick, 160);
+        }
+        setTimeout(tickKick, 500);
+
+        // Snare
+        var si = 0;
+        function tickSnare() {
+          si++;
+          if (si % 2 === 0) {
+            var buf = c.createBuffer(1, c.sampleRate * 0.07, c.sampleRate);
+            var dd = buf.getChannelData(0);
+            for (var i = 0; i < dd.length; i++)
+              dd[i] =
+                (Math.random() * 2 - 1) * Math.pow(1 - i / dd.length, 1.5);
+            var s = c.createBufferSource(),
+              g = c.createGain(),
+              f = c.createBiquadFilter();
+            f.type = "bandpass";
+            f.frequency.value = 1800;
+            f.Q.value = 0.8;
+            s.buffer = buf;
+            g.gain.value = 0.09;
+            s.connect(f);
+            f.connect(g);
+            g.connect(musicGain);
+            s.start();
+          }
+          setTimeout(tickSnare, 320);
+        }
+        setTimeout(tickSnare, 1100);
+
+        // Melody
+        var mel = [
+          { f: 392, d: 0.18 },
+          { f: 440, d: 0.18 },
+          { f: 494, d: 0.36 },
+          { f: 440, d: 0.18 },
+          { f: 392, d: 0.18 },
+          { f: 349, d: 0.36 },
+          { f: 330, d: 0.18 },
+          { f: 392, d: 0.18 },
+          { f: 440, d: 0.54 },
+          { f: 0, d: 0.36 },
+          { f: 494, d: 0.18 },
+          { f: 523, d: 0.18 },
+          { f: 494, d: 0.18 },
+          { f: 440, d: 0.18 },
+          { f: 392, d: 0.54 },
+          { f: 0, d: 0.54 },
+        ];
+        var mi = 0;
+        function tickMel() {
+          var n = mel[mi++ % mel.length];
+          if (n.f > 0) {
+            var o = c.createOscillator(),
+              g = c.createGain();
+            o.type = "triangle";
+            o.frequency.value = n.f;
+            var t = c.currentTime;
+            g.gain.setValueAtTime(0.06, t);
+            g.gain.exponentialRampToValueAtTime(0.001, t + n.d * 0.9);
+            o.connect(g);
+            g.connect(musicGain);
+            o.start(t);
+            o.stop(t + n.d);
+          }
+          setTimeout(tickMel, n.d * 1000);
+        }
+        setTimeout(tickMel, 1500);
+      }
+      function toggleMusic() {
+        AC();
+        if (!ambiStarted) {
+          startMusic();
+          return;
+        }
+        musicOn = !musicOn;
+        if (musicGain)
+          musicGain.gain.linearRampToValueAtTime(
+            musicOn ? 0.15 : 0,
+            AC().currentTime + 0.5,
+          );
+        document.getElementById("mubtn").textContent = musicOn
+          ? "MUSICA"
+          : "MUTE";
+      }
+
+      // ─── CANVAS TEXTURES ─────────────────────────────────────────────
+      function mkC(w, h, fn) {
+        var c = document.createElement("canvas");
+        c.width = w;
+        c.height = h;
+        fn(c.getContext("2d"), w, h);
+        return c;
+      }
+      function cTex(cv) {
+        var t = new THREE.CanvasTexture(cv);
+        t.needsUpdate = true;
+        return t;
+      }
+      function rr(ctx, x, y, w, h, r) {
+        ctx.beginPath();
+        ctx.moveTo(x + r, y);
+        ctx.lineTo(x + w - r, y);
+        ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+        ctx.lineTo(x + w, y + h - r);
+        ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+        ctx.lineTo(x + r, y + h);
+        ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+        ctx.lineTo(x, y + r);
+        ctx.quadraticCurveTo(x, y, x + r, y);
+        ctx.closePath();
+      }
+      function makeBackTex() {
+        return cTex(
+          mkC(256, 384, function (ctx, W, H) {
+            var gr = ctx.createLinearGradient(0, 0, W, H);
+            gr.addColorStop(0, "#3a0505");
+            gr.addColorStop(0.5, "#6a0a0a");
+            gr.addColorStop(1, "#3a0505");
+            ctx.fillStyle = gr;
+            rr(ctx, 3, 3, W - 6, H - 6, 16);
+            ctx.fill();
+            ctx.strokeStyle = "#c9a227";
+            ctx.lineWidth = 5;
+            rr(ctx, 3, 3, W - 6, H - 6, 16);
+            ctx.stroke();
+            ctx.strokeStyle = "rgba(255,220,80,.2)";
+            ctx.lineWidth = 1.5;
+            rr(ctx, 10, 10, W - 20, H - 20, 11);
+            ctx.stroke();
+            ctx.strokeStyle = "rgba(201,162,39,.18)";
+            ctx.lineWidth = 1;
+            for (var x = -20; x < W + 20; x += 26)
+              for (var y = -20; y < H + 20; y += 26) {
+                ctx.save();
+                ctx.translate(x, y);
+                ctx.rotate(Math.PI / 4);
+                ctx.strokeRect(-8, -8, 16, 16);
+                ctx.restore();
+              }
+            ctx.fillStyle = "#c9a227";
+            ctx.shadowColor = "#ffcc44";
+            ctx.shadowBlur = 14;
+            ctx.font = "bold 72px Arial";
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+            ctx.fillText("\u2660", W / 2, H / 2);
+            ctx.shadowBlur = 0;
+            ctx.font = "bold 22px Arial";
+            ctx.fillText("\u2660", 24, 28);
+            ctx.fillText("\u2660", W - 24, H - 28);
+          }),
+        );
+      }
+      function makeFaceTex(sym, col, bg1, bg2) {
+        return cTex(
+          mkC(256, 384, function (ctx, W, H) {
+            var gr = ctx.createLinearGradient(0, 0, W, H);
+            gr.addColorStop(0, bg1);
+            gr.addColorStop(1, bg2);
+            ctx.fillStyle = gr;
+            rr(ctx, 3, 3, W - 6, H - 6, 16);
+            ctx.fill();
+            ctx.strokeStyle = "#c9a227";
+            ctx.lineWidth = 5;
+            rr(ctx, 3, 3, W - 6, H - 6, 16);
+            ctx.stroke();
+            ctx.strokeStyle = "rgba(255,220,100,.18)";
+            ctx.lineWidth = 1.5;
+            rr(ctx, 10, 10, W - 20, H - 20, 11);
+            ctx.stroke();
+            ctx.fillStyle = col;
+            ctx.shadowColor = col;
+            ctx.shadowBlur = 22;
+            ctx.font = "bold 90px Arial";
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+            ctx.fillText(sym, W / 2, H / 2);
+            ctx.shadowBlur = 0;
+            ctx.font = "bold 26px Arial";
+            ctx.fillText(sym, 24, 32);
+            ctx.fillText(sym, W - 24, H - 32);
+            var sh = ctx.createLinearGradient(0, 0, W, H * 0.35);
+            sh.addColorStop(0, "rgba(255,255,255,.13)");
+            sh.addColorStop(1, "rgba(255,255,255,0)");
+            ctx.fillStyle = sh;
+            rr(ctx, 3, 3, W - 6, H * 0.32, 16);
+            ctx.fill();
+          }),
+        );
+      }
+      function makeWallTex() {
+        return cTex(
+          mkC(512, 512, function (ctx, W, H) {
+            ctx.fillStyle = "#1a0500";
+            ctx.fillRect(0, 0, W, H);
+            ctx.strokeStyle = "rgba(201,162,39,.28)";
+            ctx.lineWidth = 1.5;
+            for (var y = 0; y < H; y += 40)
+              for (var x = y % 80 === 0 ? 0 : 20; x < W; x += 40)
+                ctx.strokeRect(x + 1, y + 1, 36, 17);
+          }),
+        );
+      }
+      function makeFloorTex() {
+        return cTex(
+          mkC(512, 512, function (ctx, W, H) {
+            ctx.fillStyle = "#1a0800";
+            ctx.fillRect(0, 0, W, H);
+            var s = 64;
+            for (var x = 0; x < W; x += s)
+              for (var y = 0; y < H; y += s) {
+                if ((Math.floor(x / s) + Math.floor(y / s)) % 2 === 0) {
+                  ctx.fillStyle = "rgba(40,20,0,.6)";
+                  ctx.fillRect(x, y, s, s);
+                }
+                ctx.strokeStyle = "rgba(201,162,39,.08)";
+                ctx.lineWidth = 1;
+                ctx.strokeRect(x, y, s, s);
+              }
+          }),
+        );
+      }
+      function makeFeltTex() {
+        return cTex(
+          mkC(256, 256, function (ctx, W, H) {
+            ctx.fillStyle = "#0b4010";
+            ctx.fillRect(0, 0, W, H);
+          }),
+        );
+      }
+      function makePanelTex(items, W, H) {
+        return cTex(
+          mkC(W, H, function (ctx) {
+            var gr = ctx.createLinearGradient(0, 0, W, H);
+            gr.addColorStop(0, "rgba(10,5,0,.95)");
+            gr.addColorStop(1, "rgba(25,12,0,.95)");
+            ctx.fillStyle = gr;
+            rr(ctx, 4, 4, W - 8, H - 8, 20);
+            ctx.fill();
+            ctx.strokeStyle = "#c9a227";
+            ctx.lineWidth = 2.5;
+            rr(ctx, 4, 4, W - 8, H - 8, 20);
+            ctx.stroke();
+            ctx.strokeStyle = "rgba(255,220,80,.15)";
+            ctx.lineWidth = 1;
+            rr(ctx, 12, 12, W - 24, H - 24, 14);
+            ctx.stroke();
+            items.forEach(function (item) {
+              ctx.fillStyle = item.color || "#f5d76e";
+              ctx.font =
+                (item.bold ? "bold " : "") + (item.size || 28) + "px Georgia";
+              ctx.textAlign = "center";
+              ctx.textBaseline = "middle";
+              ctx.fillText(item.text, W / 2, item.y);
+            });
+          }),
+        );
+      }
+      function makeSignTex(text, color) {
+        return cTex(
+          mkC(512, 80, function (ctx, W, H) {
+            ctx.clearRect(0, 0, W, H);
+            ctx.fillStyle = color;
+            ctx.shadowColor = color;
+            ctx.shadowBlur = 18;
+            ctx.font = "bold 44px Georgia";
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+            ctx.fillText(text, W / 2, H / 2);
+          }),
+        );
+      }
+
+      // ─── THREE.JS SETUP ──────────────────────────────────────────────
+      var renderer = new THREE.WebGLRenderer({ antialias: true });
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      renderer.shadowMap.enabled = false;
+      renderer.xr.enabled = true;
+      document.body.appendChild(renderer.domElement);
+
+      var scene = new THREE.Scene();
+      scene.background = new THREE.Color(0x06030a);
+      scene.fog = new THREE.Fog(0x06030a, 12, 45);
+
+      var camera = new THREE.PerspectiveCamera(
+        72,
+        window.innerWidth / window.innerHeight,
+        0.1,
+        80,
+      );
+      var rig = new THREE.Object3D();
+      rig.position.set(0, 1.6, 5);
+      scene.add(rig);
+      rig.add(camera);
+
+      // Camera-anchored UI (visible in VR headset)
+      var camUI = new THREE.Group();
+      camera.add(camUI);
+
+      window.addEventListener("resize", function () {
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+      });
+
+      var camYaw = Math.PI,
+        camPitch = 0;
+      var isDrag = false,
+        prevMX = 0,
+        prevMY = 0;
+      renderer.domElement.addEventListener("mousedown", function (e) {
+        isDrag = false;
+        prevMX = e.clientX;
+        prevMY = e.clientY;
+      });
+      renderer.domElement.addEventListener("mousemove", function (e) {
+        if (e.buttons !== 1) return;
+        var dx = e.clientX - prevMX,
+          dy = e.clientY - prevMY;
+        if (Math.abs(dx) > 2 || Math.abs(dy) > 2) isDrag = true;
+        camYaw -= dx * 0.003;
+        camPitch -= dy * 0.003;
+        camPitch = Math.max(-1.2, Math.min(1.2, camPitch));
+        prevMX = e.clientX;
+        prevMY = e.clientY;
+        AC();
+        startMusic();
+      });
+      renderer.domElement.addEventListener("click", function () {
+        if (!isDrag) tryFlip();
+        AC();
+        startMusic();
+      });
+      var touchPrev = { x: 0, y: 0 };
+      renderer.domElement.addEventListener("touchstart", function (e) {
+        var t = e.touches[0];
+        touchPrev = { x: t.clientX, y: t.clientY };
+        AC();
+        startMusic();
+      });
+      renderer.domElement.addEventListener(
+        "touchmove",
+        function (e) {
+          e.preventDefault();
+          var t = e.touches[0];
+          camYaw -= (t.clientX - touchPrev.x) * 0.004;
+          camPitch -= (t.clientY - touchPrev.y) * 0.004;
+          camPitch = Math.max(-1.2, Math.min(1.2, camPitch));
+          touchPrev = { x: t.clientX, y: t.clientY };
+        },
+        { passive: false },
+      );
+      var keys = {};
+      window.addEventListener("keydown", function (e) {
+        keys[e.code] = true;
+      });
+      window.addEventListener("keyup", function (e) {
+        keys[e.code] = false;
+      });
+
+      // ─── LIGHTS ──────────────────────────────────────────────────────
+      scene.add(new THREE.AmbientLight(0x160b00, 0.6));
+      var mL = new THREE.PointLight(0xffcc44, 2.0, 12, 2);
+      mL.position.set(0, 4.5, -3);
+      scene.add(mL);
+      var lights2 = [
+        [-4, 3, -3, 0xff6622, 0.8],
+        [4, 3, -3, 0xff6622, 0.8],
+        [-6, 2, -8, 0xcc1111, 0.5],
+        [6, 2, -8, 0x1111cc, 0.5],
+        [0, 4, -15, 0xffcc44, 1.0],
+        [-12, 3, -8, 0xff6622, 0.6],
+        [12, 3, -8, 0xff6622, 0.6],
+      ];
+      lights2.forEach(function (d) {
+        var l = new THREE.PointLight(d[3], d[4], 8, 2);
+        l.position.set(d[0], d[1], d[2]);
+        scene.add(l);
+      });
+
+      // ─── ENVIRONMENT ─────────────────────────────────────────────────
+      var wallTex = makeWallTex();
+      wallTex.wrapS = wallTex.wrapT = THREE.RepeatWrapping;
+      wallTex.repeat.set(4, 2);
+      var floorTex = makeFloorTex();
+      floorTex.wrapS = floorTex.wrapT = THREE.RepeatWrapping;
+      floorTex.repeat.set(8, 8);
+      var feltTex = makeFeltTex();
+      feltTex.wrapS = feltTex.wrapT = THREE.RepeatWrapping;
+      feltTex.repeat.set(2, 2);
+
+      function addPlane(w, h, mat, px, py, pz, rx, ry) {
+        var m = new THREE.Mesh(new THREE.PlaneGeometry(w, h), mat);
+        m.position.set(px, py, pz);
+        if (rx) m.rotation.x = rx;
+        if (ry) m.rotation.y = ry;
+        scene.add(m);
+      }
+      function addBox(w, h, d, color, px, py, pz, metal, rough) {
+        var m = new THREE.Mesh(
+          new THREE.BoxGeometry(w, h, d),
+          new THREE.MeshStandardMaterial({
+            color: color,
+            metalness: metal || 0,
+            roughness: rough || 0.8,
+          }),
+        );
+        m.position.set(px, py, pz);
+        scene.add(m);
+        return m;
+      }
+      function addCyl(r, h, color, px, py, pz, metal, rough) {
+        var m = new THREE.Mesh(
+          new THREE.CylinderGeometry(r, r, h, 24),
+          new THREE.MeshStandardMaterial({
+            color: color,
+            metalness: metal || 0.85,
+            roughness: rough || 0.1,
+          }),
+        );
+        m.position.set(px, py, pz);
+        scene.add(m);
+      }
+
+      // Room
+      addPlane(
+        44,
+        44,
+        new THREE.MeshLambertMaterial({ map: floorTex }),
+        0,
+        0,
+        0,
+        -Math.PI / 2,
+      );
+      addPlane(
+        44,
+        6,
+        new THREE.MeshLambertMaterial({ map: wallTex }),
+        0,
+        3,
+        -22,
+      );
+      addPlane(
+        44,
+        6,
+        new THREE.MeshLambertMaterial({ map: wallTex }),
+        0,
+        3,
+        10,
+        0,
+        Math.PI,
+      );
+      addPlane(
+        44,
+        6,
+        new THREE.MeshLambertMaterial({ map: wallTex }),
+        -22,
+        3,
+        -6,
+        0,
+        Math.PI / 2,
+      );
+      addPlane(
+        44,
+        6,
+        new THREE.MeshLambertMaterial({ map: wallTex }),
+        22,
+        3,
+        -6,
+        0,
+        -Math.PI / 2,
+      );
+      addPlane(
+        44,
+        44,
+        new THREE.MeshLambertMaterial({ color: 0x0d0600 }),
+        0,
+        6,
+        0,
+        Math.PI / 2,
+      );
+
+      // Tables
+      function addTable(px, pz, sc) {
+        sc = sc || 1;
+        var m = new THREE.Mesh(
+          new THREE.PlaneGeometry(7 * sc, 4.5 * sc),
+          new THREE.MeshLambertMaterial({ map: feltTex }),
+        );
+        m.rotation.x = -Math.PI / 2;
+        m.position.set(px, 0.01, pz);
+        scene.add(m);
+        var rim = new THREE.Mesh(
+          new THREE.TorusGeometry(3 * sc, 0.08, 12, 64),
+          new THREE.MeshStandardMaterial({
+            color: 0xc9a227,
+            metalness: 0.95,
+            roughness: 0.05,
+          }),
+        );
+        rim.rotation.x = Math.PI / 2;
+        rim.position.set(px, 0.02, pz);
+        scene.add(rim);
+        addBox(6.8 * sc, 0.08, 4.3 * sc, 0x1a0800, px, -0.04, pz, 0.2, 0.9);
+        var legPairs = [
+          [-1, -1],
+          [-1, 1],
+          [1, -1],
+          [1, 1],
+        ];
+        legPairs.forEach(function (lp) {
+          addBox(
+            0.12 * sc,
+            1,
+            0.12 * sc,
+            0x3a1800,
+            px + lp[0] * 2.8 * sc,
+            -0.5,
+            pz + lp[1] * 1.8 * sc,
+            0.4,
+            0.6,
+          );
+        });
+      }
+      addTable(0, -3, 1);
+      addTable(-10, -12, 0.9);
+      addTable(10, -12, 0.9);
+      addTable(0, -16, 0.9);
+
+      // Chips on tables
+      [
+        [0, -3],
+        [-10, -12],
+        [10, -12],
+        [0, -16],
+      ].forEach(function (tp) {
+        [0xc9a227, 0xcc2222, 0x2222cc, 0x22cc44, 0xcc22cc].forEach(
+          function (col, i) {
+            addCyl(
+              0.12,
+              0.07,
+              col,
+              tp[0] - 1.8 + i * 0.45 + Math.random() * 0.2,
+              0.09,
+              tp[1] - 1.5 + Math.random() * 0.3,
+            );
+          },
+        );
+      });
+
+      // Slot machines
+      [-14, 14].forEach(function (sx) {
+        for (var i = 0; i < 5; i++) {
+          var pz = -2 + i * -3.5;
+          addBox(0.9, 1.6, 0.5, 0x220800, sx, 0.8, pz, 0.65, 0.25);
+          var scr = new THREE.Mesh(
+            new THREE.PlaneGeometry(0.6, 0.35),
+            new THREE.MeshBasicMaterial({
+              color: 0xffaa22,
+              transparent: true,
+              opacity: 0.7,
+            }),
+          );
+          scr.position.set(sx, 1.1, pz + (sx < 0 ? -0.26 : 0.26));
+          if (sx > 0) scr.rotation.y = Math.PI;
+          scene.add(scr);
+          addCyl(0.04, 0.5, 0xc9a227, sx < 0 ? sx + 0.5 : sx - 0.5, 0.45, pz);
+          var kb = new THREE.Mesh(
+            new THREE.SphereGeometry(0.07, 12, 12),
+            new THREE.MeshStandardMaterial({
+              color: 0xcc2222,
+              metalness: 0.7,
+              roughness: 0.2,
+            }),
+          );
+          kb.position.set(sx < 0 ? sx + 0.5 : sx - 0.5, 0.7, pz);
+          scene.add(kb);
+        }
+      });
+
+      // Bar
+      addBox(16, 0.06, 1.5, 0x3a1800, 0, 0.9, -19, 0.5, 0.4);
+      addBox(16, 1.8, 0.12, 0x220800, 0, 0.9, -19.6, 0.2, 0.8);
+      for (var bi2 = 0; bi2 < 10; bi2++) {
+        var bh = 0.28 + Math.random() * 0.18;
+        addBox(
+          0.06,
+          bh,
+          0.06,
+          [0x44aa22, 0xcc4422, 0xaaaa22, 0x2244aa][bi2 % 4],
+          -2.2 + bi2 * 0.48,
+          0.9 + bh / 2,
+          -19.2,
+          0.6,
+          0.3,
+        );
+      }
+
+      // Signs
+      function addSign(text, color, px, py, pz, ry) {
+        var m = new THREE.Mesh(
+          new THREE.PlaneGeometry(3.5, 0.6),
+          new THREE.MeshBasicMaterial({
+            map: makeSignTex(text, color),
+            transparent: true,
+            side: THREE.DoubleSide,
+          }),
+        );
+        m.position.set(px, py, pz);
+        if (ry) m.rotation.y = ry;
+        scene.add(m);
+      }
+      addSign("♠  CASINO MEMORAMA  ♠", "#f5d76e", 0, 4.5, -3.5);
+      addSign("SLOTS", "#ff6622", -13, 3.5, -2, Math.PI / 2);
+      addSign("SLOTS", "#ff6622", 13, 3.5, -2, -Math.PI / 2);
+      addSign("BAR", "#44aaff", 0, 3.5, -21);
+      addSign("BLACKJACK", "#f5d76e", -9, 3.5, -8, 0.4);
+      addSign("POKER", "#f5d76e", 9, 3.5, -8, -0.4);
+
+      // Neon ring under main sign
+      var nr = new THREE.Mesh(
+        new THREE.TorusGeometry(2.3, 0.025, 8, 64),
+        new THREE.MeshBasicMaterial({ color: 0xc9a227 }),
+      );
+      nr.position.set(0, 4.5, -3.55);
+      scene.add(nr);
+
+      // Chandeliers
+      function addChandelier(px, pz) {
+        var base = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.3, 0.1, 0.2, 16),
+          new THREE.MeshStandardMaterial({
+            color: 0xc9a227,
+            metalness: 0.95,
+            roughness: 0.05,
+          }),
+        );
+        base.position.set(px, 5.8, pz);
+        scene.add(base);
+        for (var i = 0; i < 8; i++) {
+          var a = (i / 8) * Math.PI * 2;
+          var bm = new THREE.Mesh(
+            new THREE.SphereGeometry(0.05, 8, 8),
+            new THREE.MeshBasicMaterial({ color: 0xffee88 }),
+          );
+          bm.position.set(px + Math.cos(a) * 0.5, 5.45, pz + Math.sin(a) * 0.5);
+          scene.add(bm);
+          var pl = new THREE.PointLight(0xffcc44, 0.2, 3, 2);
+          pl.position.copy(bm.position);
+          scene.add(pl);
+        }
+      }
+      addChandelier(0, -3);
+      addChandelier(-8, -12);
+      addChandelier(8, -12);
+      addChandelier(0, -17);
+
+      // Sparkles
+      var sparkles = [];
+      for (var si2 = 0; si2 < 20; si2++) {
+        var sp = new THREE.Mesh(
+          new THREE.SphereGeometry(0.022, 6, 6),
+          new THREE.MeshBasicMaterial({
+            color: [0xf5d76e, 0xc9a227, 0xff8833, 0xffffff][si2 % 4],
+          }),
+        );
+        sp.position.set(
+          (Math.random() - 0.5) * 14,
+          Math.random() * 3 + 0.5,
+          -2 - Math.random() * 20,
+        );
+        sp._base = sp.position.clone();
+        sp._ph = Math.random() * Math.PI * 2;
+        sp._sp = 0.5 + Math.random();
+        scene.add(sp);
+        sparkles.push(sp);
+      }
+
+      // ─── 3D HUD (camera-anchored, works in VR) ───────────────────────
+      var hudCv = mkC(512, 82, function () {});
+      var hudTex2 = new THREE.CanvasTexture(hudCv);
+      var hudMesh = new THREE.Mesh(
+        new THREE.PlaneGeometry(1.4, 0.23),
+        new THREE.MeshBasicMaterial({
+          map: hudTex2,
+          transparent: true,
+          depthTest: false,
+          side: THREE.DoubleSide,
+        }),
+      );
+      hudMesh.position.set(0, -0.38, -1.0);
+      camUI.add(hudMesh);
+
+      function drawHUD() {
+        var ctx = hudCv.getContext("2d"),
+          W = hudCv.width,
+          H = hudCv.height;
+        ctx.clearRect(0, 0, W, H);
+
+        // Background
+        ctx.fillStyle = "rgba(6,3,0,.85)";
+        rr(ctx, 2, 2, W - 4, H - 4, 12);
+        ctx.fill();
+        ctx.strokeStyle = "rgba(201,162,39,.6)";
+        ctx.lineWidth = 1.5;
+        rr(ctx, 2, 2, W - 4, H - 4, 12);
+        ctx.stroke();
+
+        var items = [
+          { label: "RACHA", val: G.streak },
+          { label: "PUNTOS", val: G.score },
+          { label: "RECORD", val: G.best },
+          { label: "FALLOS", val: MAX_TRIES - G.failedTries },
+          { label: "RESETS", val: G.resets },
+        ];
+
+        var cw = W / items.length;
+        var labelY = 12; // top of cell
+        var valueY = H / 2 + 8; // center-ish for the value
+
+        items.forEach(function (it, i) {
+          var cx = cw * i + cw / 2;
+
+          // Label (small, gold-dim)
+          ctx.fillStyle = "#a07820";
+          ctx.font = "11px Arial";
+          ctx.textAlign = "center";
+          ctx.textBaseline = "top";
+          ctx.fillText(it.label, cx, labelY);
+
+          // Value (large, colored)
+          var rem = it.label === "FALLOS" ? it.val : -1;
+          ctx.fillStyle =
+            rem >= 0
+              ? rem <= 3
+                ? "#ff4444"
+                : rem <= 6
+                  ? "#ff9933"
+                  : "#f5d76e"
+              : "#f5d76e";
+          ctx.font = "bold 26px Georgia";
+          ctx.textBaseline = "middle";
+          ctx.fillText(String(it.val), cx, valueY);
+
+          // Column divider
+          if (i < items.length - 1) {
+            ctx.strokeStyle = "rgba(201,162,39,.22)";
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(cw * (i + 1), 8);
+            ctx.lineTo(cw * (i + 1), H - 8);
+            ctx.stroke();
+          }
+        });
+
+        hudTex2.needsUpdate = true;
+      }
+
+      // ─── 3D TOAST (camera-anchored) ──────────────────────────────────
+      var toastCv = mkC(400, 68, function () {});
+      var toastTex2 = new THREE.CanvasTexture(toastCv);
+      var toastMesh = new THREE.Mesh(
+        new THREE.PlaneGeometry(1.1, 0.19),
+        new THREE.MeshBasicMaterial({
+          map: toastTex2,
+          transparent: true,
+          depthTest: false,
+          opacity: 0,
+        }),
+      );
+      toastMesh.position.set(0.52, -0.15, -1.0);
+      camUI.add(toastMesh);
+      var toastTimer = 0;
+
+      function showToast(text, sub, color) {
+        var ctx = toastCv.getContext("2d"),
+          W = toastCv.width,
+          H = toastCv.height;
+        ctx.clearRect(0, 0, W, H);
+        ctx.fillStyle = "rgba(8,4,0,.8)";
+        rr(ctx, 2, 2, W - 4, H - 4, 12);
+        ctx.fill();
+        ctx.strokeStyle = "rgba(201,162,39,.38)";
+        ctx.lineWidth = 1.5;
+        rr(ctx, 2, 2, W - 4, H - 4, 12);
+        ctx.stroke();
+        ctx.fillStyle = color || "#f5d76e";
+        ctx.font = "bold 22px Georgia";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "top";
+        ctx.fillText(text, W / 2, 6);
+        ctx.fillStyle = "rgba(255,255,255,.5)";
+        ctx.font = "13px Georgia";
+        ctx.textBaseline = "bottom";
+        ctx.fillText(sub, W / 2, H - 5);
+        toastTex2.needsUpdate = true;
+        toastMesh.material.opacity = 1;
+        toastTimer = 2.5;
+      }
+
+      // ─── 3D CURSOR (camera-anchored, works in VR) ────────────────────
+      var dotM = new THREE.Mesh(
+        new THREE.CircleGeometry(0.006, 16),
+        new THREE.MeshBasicMaterial({
+          color: 0xf5d76e,
+          depthTest: false,
+          transparent: true,
+          opacity: 0.9,
+          side: THREE.DoubleSide,
+        }),
+      );
+      dotM.position.set(0, 0, -1.0);
+      camUI.add(dotM);
+
+      var ringM = new THREE.Mesh(
+        new THREE.RingGeometry(0.014, 0.02, 32),
+        new THREE.MeshBasicMaterial({
+          color: 0xf5d76e,
+          depthTest: false,
+          transparent: true,
+          opacity: 0.8,
+          side: THREE.DoubleSide,
+        }),
+      );
+      ringM.position.set(0, 0, -1.0);
+      camUI.add(ringM);
+
+      var gazeRingM = new THREE.Mesh(
+        new THREE.RingGeometry(0.022, 0.032, 32, 1, 0, 0),
+        new THREE.MeshBasicMaterial({
+          color: 0xffcc44,
+          depthTest: false,
+          transparent: true,
+          opacity: 0,
+          side: THREE.DoubleSide,
+        }),
+      );
+      gazeRingM.position.set(0, 0, -1.0);
+      camUI.add(gazeRingM);
+
+      // ─── 3D RESULT PANELS ────────────────────────────────────────────
+      function makeResultPanel(isWin) {
+        var grp = new THREE.Group();
+        var W = 640,
+          H = 380;
+
+        var cv = mkC(W, H, function (ctx) {
+          var gr = ctx.createRadialGradient(
+            W / 2,
+            H / 2,
+            10,
+            W / 2,
+            H / 2,
+            W * 0.7,
+          );
+          gr.addColorStop(0, isWin ? "rgba(25,12,0,.97)" : "rgba(55,0,0,.97)");
+          gr.addColorStop(1, "rgba(0,0,0,.97)");
+          ctx.fillStyle = gr;
+          rr(ctx, 4, 4, W - 8, H - 8, 28);
+          ctx.fill();
+          ctx.strokeStyle = isWin ? "#c9a227" : "#cc2222";
+          ctx.lineWidth = 3;
+          rr(ctx, 4, 4, W - 8, H - 8, 28);
+          ctx.stroke();
+          ctx.fillStyle = isWin ? "#f5d76e" : "#ff3333";
+          ctx.font = "bold 52px Georgia";
+          ctx.textAlign = "center";
+          ctx.textBaseline = "top";
+          ctx.shadowColor = isWin ? "#c9a227" : "#ff0000";
+          ctx.shadowBlur = 18;
+          ctx.fillText(isWin ? "JACKPOT!" : "GAME OVER", W / 2, 30);
+          ctx.shadowBlur = 0;
+          ctx.fillStyle = "rgba(255,255,255,.6)";
+          ctx.font = "20px Georgia";
+          ctx.fillText("Mirando boton para continuar", W / 2, 220);
+        });
+        var tex = new THREE.CanvasTexture(cv);
+        var bg = new THREE.Mesh(
+          new THREE.PlaneGeometry(2, 1.2),
+          new THREE.MeshBasicMaterial({
+            map: tex,
+            transparent: true,
+            side: THREE.DoubleSide,
+          }),
+        );
+        grp.add(bg);
+
+        // Restart button 3D
+        var btnCv = mkC(256, 72, function (ctx, W2, H2) {
+          var gr2 = ctx.createLinearGradient(0, 0, W2, H2);
+          gr2.addColorStop(0, "#7a1b1b");
+          gr2.addColorStop(1, "#c9a227");
+          ctx.fillStyle = gr2;
+          rr(ctx, 3, 3, W2 - 6, H2 - 6, 18);
+          ctx.fill();
+          ctx.strokeStyle = "#f5d76e";
+          ctx.lineWidth = 2.5;
+          rr(ctx, 3, 3, W2 - 6, H2 - 6, 18);
+          ctx.stroke();
+          ctx.fillStyle = "#fff";
+          ctx.font = "bold 22px Georgia";
+          ctx.textAlign = "center";
+          ctx.textBaseline = "middle";
+          ctx.fillText("NUEVA PARTIDA", W2 / 2, H2 / 2);
+        });
+        var btn = new THREE.Mesh(
+          new THREE.PlaneGeometry(1.2, 0.22),
+          new THREE.MeshBasicMaterial({
+            map: new THREE.CanvasTexture(btnCv),
+            transparent: true,
+          }),
+        );
+        btn.position.set(0, -0.46, 0.01);
+        btn.userData.isRestartBtn = true;
+        grp.add(btn);
+
+        grp._cv = cv;
+        grp._tex = tex;
+        grp._isWin = isWin;
+        grp.visible = false;
+        scene.add(grp);
+        return grp;
+      }
+      var winPanel = makeResultPanel(true);
+      var overPanel = makeResultPanel(false);
+
+      function updateResultPanel(panel, roundScore, totalScore, best) {
+        var cv = panel._cv,
+          ctx = cv.getContext("2d"),
+          W = cv.width,
+          H = cv.height,
+          isWin = panel._isWin;
+        var gr = ctx.createRadialGradient(
+          W / 2,
+          H / 2,
+          10,
+          W / 2,
+          H / 2,
+          W * 0.7,
+        );
+        gr.addColorStop(0, isWin ? "rgba(25,12,0,.97)" : "rgba(55,0,0,.97)");
+        gr.addColorStop(1, "rgba(0,0,0,.97)");
+        ctx.fillStyle = gr;
+        rr(ctx, 4, 4, W - 8, H - 8, 28);
+        ctx.fill();
+        ctx.strokeStyle = isWin ? "#c9a227" : "#cc2222";
+        ctx.lineWidth = 3;
+        rr(ctx, 4, 4, W - 8, H - 8, 28);
+        ctx.stroke();
+        ctx.strokeStyle = "rgba(255,220,80,.12)";
+        ctx.lineWidth = 1;
+        rr(ctx, 12, 12, W - 24, H - 24, 20);
+        ctx.stroke();
+        ctx.fillStyle = isWin ? "#f5d76e" : "#ff3333";
+        ctx.font = "bold 52px Georgia";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "top";
+        ctx.shadowColor = isWin ? "#c9a227" : "#ff0000";
+        ctx.shadowBlur = 18;
+        ctx.fillText(isWin ? "🎰 JACKPOT!" : "💀 GAME OVER", W / 2, 28);
+        ctx.shadowBlur = 0;
+        ctx.fillStyle = "rgba(255,255,255,.8)";
+        ctx.font = "26px Georgia";
+        if (isWin) {
+          ctx.fillText("Ronda: " + roundScore + " pts", W / 2, 110);
+          ctx.fillText("Total: " + totalScore + " pts", W / 2, 152);
+        } else {
+          ctx.fillStyle = "rgba(255,180,180,.8)";
+          ctx.fillText("Puntaje reiniciado", W / 2, 110);
+          ctx.fillStyle = "rgba(255,255,255,.8)";
+          ctx.fillText("Record: " + best + " pts", W / 2, 152);
+        }
+        ctx.strokeStyle = "rgba(201,162,39,.4)";
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(W * 0.1, 198);
+        ctx.lineTo(W * 0.9, 198);
+        ctx.stroke();
+        ctx.fillStyle = "rgba(245,215,110,.45)";
+        ctx.font = "18px Georgia";
+        ctx.fillText("[ Mira el boton para continuar ]", W / 2, 220);
+        panel._tex.needsUpdate = true;
+      }
+      function showResultPanel(panel) {
+        var camPos = new THREE.Vector3();
+        camera.getWorldPosition(camPos);
+        var camDir = new THREE.Vector3(0, 0, -1);
+        camDir.applyQuaternion(
+          camera.getWorldQuaternion(new THREE.Quaternion()),
+        );
+        panel.position.copy(camPos).addScaledVector(camDir, 2.4);
+        panel.position.y = 1.5;
+        panel.lookAt(camPos);
+        panel.visible = true;
+      }
+
+      // ─── GAME STATE ───────────────────────────────────────────────────
+      var TYPES = [
+        { id: 0, sym: "💎", col: "#55ccff", bg1: "#001533", bg2: "#003366" },
+        { id: 1, sym: "👑", col: "#ffcc00", bg1: "#221100", bg2: "#442200" },
+        { id: 2, sym: "⭐", col: "#ffff44", bg1: "#111100", bg2: "#333300" },
+        { id: 3, sym: "🍀", col: "#44ff88", bg1: "#001108", bg2: "#002211" },
+      ];
+      var GPOS = [
+        { x: -1.5, y: 0.1, z: -2.4 },
+        { x: -0.5, y: 0.1, z: -2.4 },
+        { x: 0.5, y: 0.1, z: -2.4 },
+        { x: 1.5, y: 0.1, z: -2.4 },
+        { x: -1.5, y: 0.1, z: -3.4 },
+        { x: -0.5, y: 0.1, z: -3.4 },
+        { x: 0.5, y: 0.1, z: -3.4 },
+        { x: 1.5, y: 0.1, z: -3.4 },
+      ];
+      var MAX_TRIES = 10;
+      var G = {
+        cards: [],
+        flipped: [],
+        matched: [],
+        score: 0,
+        streak: 0,
+        best: 0,
+        tries: 0,
+        failedTries: 0,
+        roundScore: 0,
+        locked: false,
+        resets: 0,
+      };
+
+      var backTex2 = makeBackTex();
+      var faceTexArr = TYPES.map(function (t) {
+        return makeFaceTex(t.sym, t.col, t.bg1, t.bg2);
+      });
+      var cardsGrp = new THREE.Group();
+      scene.add(cardsGrp);
+
+      function shuffle(a) {
+        for (var i = a.length - 1; i > 0; i--) {
+          var j = 0 | (Math.random() * (i + 1));
+          var tmp = a[i];
+          a[i] = a[j];
+          a[j] = tmp;
+        }
+        return a;
+      }
+      var CW = 0.63,
+        CH = 0.93;
+      function buildCards() {
+        while (cardsGrp.children.length) cardsGrp.remove(cardsGrp.children[0]);
+        G.cards = [];
+        G.flipped = [];
+        G.matched = [];
+        var deck = [];
+        TYPES.forEach(function (t) {
+          deck.push({ id: t.id, texIdx: TYPES.indexOf(t) });
+          deck.push({ id: t.id, texIdx: TYPES.indexOf(t) });
+        });
+        shuffle(deck);
+        deck.forEach(function (card, i) {
+          var p = GPOS[i];
+          var grp = new THREE.Group();
+          grp.position.set(p.x, p.y + 1.8, p.z);
+          grp.rotation.x = -Math.PI / 2;
+
+          var bk = new THREE.Mesh(
+            new THREE.PlaneGeometry(CW, CH),
+            new THREE.MeshBasicMaterial({
+              map: backTex2,
+              side: THREE.FrontSide,
+            }),
+          );
+          bk.position.z = 0.003;
+          grp.add(bk);
+
+          var fr = new THREE.Mesh(
+            new THREE.PlaneGeometry(CW, CH),
+            new THREE.MeshBasicMaterial({
+              map: faceTexArr[card.texIdx],
+              side: THREE.FrontSide,
+            }),
+          );
+          fr.position.z = -0.003;
+          fr.rotation.z = Math.PI;
+          grp.add(fr);
+
+          var gw = new THREE.Mesh(
+            new THREE.PlaneGeometry(CW + 0.05, CH + 0.05),
+            new THREE.MeshBasicMaterial({
+              color: 0xf5d76e,
+              transparent: true,
+              opacity: 0,
+            }),
+          );
+          gw.position.z = 0.001;
+          grp.add(gw);
+
+          var hit = new THREE.Mesh(
+            new THREE.PlaneGeometry(CW, CH),
+            new THREE.MeshBasicMaterial({
+              visible: false,
+              side: THREE.DoubleSide,
+            }),
+          );
+          hit.position.z = 0.01;
+          hit.userData.cardIndex = i;
+          grp.add(hit);
+
+          cardsGrp.add(grp);
+          G.cards.push({
+            id: card.id,
+            flipped: false,
+            matched: false,
+            grp: grp,
+            bk: bk,
+            fr: fr,
+            gw: gw,
+            hit: hit,
+            basePos: { x: p.x, y: p.y, z: p.z },
+            flipAngle: 0,
+            flipTarget: 0,
+            hoverOff: 0,
+            hoverTarget: 0,
+            popScale: 1,
+            popVel: 0,
+            shakeTimer: 0,
+            _dropping: true,
+            _dropStart: Date.now() + 400 + i * 90,
+          });
+        });
+      }
+
+      // ─── RAYCASTING ───────────────────────────────────────────────────
+      var raycaster = new THREE.Raycaster();
+      function getHitCard() {
+        raycaster.setFromCamera({ x: 0, y: 0 }, camera);
+        var meshes = G.cards
+          .filter(function (c) {
+            return !c.matched && !c.flipped;
+          })
+          .map(function (c) {
+            return c.hit;
+          });
+        var hits = raycaster.intersectObjects(meshes);
+        return hits.length > 0 ? hits[0].object.userData.cardIndex : -1;
+      }
+      function getHitBtn() {
+        raycaster.setFromCamera({ x: 0, y: 0 }, camera);
+        var btns = [];
+        winPanel.children.forEach(function (c) {
+          if (c.userData.isRestartBtn) btns.push(c);
+        });
+        overPanel.children.forEach(function (c) {
+          if (c.userData.isRestartBtn) btns.push(c);
+        });
+        return raycaster.intersectObjects(btns).length > 0;
+      }
+      function tryFlip() {
+        var idx = getHitCard();
+        if (idx >= 0) onCard(idx);
+      }
+
+      // ─── GAME LOGIC ───────────────────────────────────────────────────
+      function onCard(i) {
+        AC();
+        startMusic();
+        var c = G.cards[i];
+        if (G.locked || c.matched || c.flipped || G.flipped.length >= 2) return;
+        sfx.flip();
+        c.flipped = true;
+        c.flipTarget = Math.PI;
+        G.flipped.push(i);
+        if (G.flipped.length === 2) {
+          G.tries++;
+          G.locked = true;
+          setTimeout(checkMatch, 900);
+        }
+        drawHUD();
+      }
+      function checkMatch() {
+        var a = G.flipped[0],
+          b = G.flipped[1],
+          ca = G.cards[a],
+          cb = G.cards[b];
+        if (ca.id === cb.id) {
+          sfx.match();
+          ca.matched = cb.matched = true;
+          G.matched.push(a, b);
+          G.streak++;
+          var pts = 100 * G.streak;
+          G.score += pts;
+          G.roundScore += pts;
+          if (G.score > G.best) G.best = G.score;
+          ca.popVel = 0.08;
+          cb.popVel = 0.08;
+          ca.gw.material.opacity = 1;
+          cb.gw.material.opacity = 1;
+          showToast("+" + pts + " pts", "Racha x" + G.streak, "#f5d76e");
+          spawnCoins(6);
+          G.flipped = [];
+          G.locked = false;
+          drawHUD();
+          if (G.matched.length === G.cards.length) setTimeout(doShowWin, 700);
+        } else {
+          sfx.miss();
+          var prev = G.streak;
+          G.streak = 0;
+          G.failedTries++;
+          ca.shakeTimer = 0.5;
+          cb.shakeTimer = 0.5;
+          var rem = MAX_TRIES - G.failedTries;
+          if (G.failedTries >= MAX_TRIES) {
+            G.score = 0;
+            G.roundScore = 0;
+            G.failedTries = 0;
+            G.resets++;
+            showToast("RESET! Puntaje a 0", "Reset #" + G.resets, "#ff7733");
+          } else if (prev > 0) {
+            showToast("Racha perdida", rem + " fallos para reset", "#ff5555");
+          } else {
+            showToast("No coinciden", rem + " fallos para reset", "#ff9966");
+          }
+          drawHUD();
+          setTimeout(function () {
+            ca.flipTarget = 0;
+            cb.flipTarget = 0;
+            ca.flipped = cb.flipped = false;
+            G.flipped = [];
+            G.locked = false;
+          }, 820);
+        }
+      }
+      function doShowWin() {
+        sfx.win();
+        spawnCoins(35);
+        updateResultPanel(winPanel, G.roundScore, G.score, G.best);
+        showResultPanel(winPanel);
+      }
+      function doShowOver() {
+        updateResultPanel(overPanel, 0, 0, G.best);
+        showResultPanel(overPanel);
+      }
+      function restart() {
+        G.flipped = [];
+        G.matched = [];
+        G.locked = false;
+        G.tries = 0;
+        G.failedTries = 0;
+        G.roundScore = 0;
+        G.score = 0;
+        G.streak = 0;
+        G.resets = 0;
+        winPanel.visible = false;
+        overPanel.visible = false;
+        buildCards();
+        drawHUD();
+        showToast("Nueva partida", "Encuentra los 4 pares", "#f5d76e");
+      }
+      function spawnCoins(n) {
+        var box = document.getElementById("coins");
+        var icons = ["🪙", "💰", "⭐", "💵", "🎰"];
+        for (var i = 0; i < n; i++)
+          (function (delay) {
+            setTimeout(function () {
+              var d = document.createElement("div");
+              d.className = "coin";
+              d.textContent = icons[0 | (Math.random() * icons.length)];
+              d.style.left = Math.random() * 100 + "vw";
+              d.style.animationDuration = 1.4 + Math.random() * 2 + "s";
+              d.style.animationDelay = Math.random() * 0.4 + "s";
+              box.appendChild(d);
+              setTimeout(function () {
+                d.remove();
+              }, 4000);
+            }, delay);
+          })(i * 90);
+      }
+
+      // ─── VR ──────────────────────────────────────────────────────────
+      function doVR() {
+        if (!navigator.xr) {
+          alert("WebXR no disponible");
+          return;
+        }
+        navigator.xr.isSessionSupported("immersive-vr").then(function (ok) {
+          if (ok)
+            navigator.xr
+              .requestSession("immersive-vr", {
+                optionalFeatures: ["local-floor"],
+              })
+              .then(function (s) {
+                renderer.xr.setSession(s);
+              });
+          else alert("VR no disponible en este dispositivo");
+        });
+      }
+      renderer.xr.addEventListener("sessionstart", function () {
+        ["xhair", "gw", "vrbtn", "mubtn", "hint"].forEach(function (id) {
+          var el = document.getElementById(id);
+          if (el) el.style.display = "none";
+        });
+      });
+      renderer.xr.addEventListener("sessionend", function () {
+        ["xhair", "gw", "vrbtn", "mubtn", "hint"].forEach(function (id) {
+          var el = document.getElementById(id);
+          if (el) el.style.display = "";
+        });
+      });
+
+      // ─── GAZE ────────────────────────────────────────────────────────
+      var GAZE_T = 0.6;
+      var gazeIdx = -1,
+        gazeTimer = 0;
+      var gazeArc2D = document.getElementById("ga");
+      var xhRing = document.getElementById("xr");
+      var ARC_C = Math.PI * 2 * 22;
+
+      // ─── ANIMATION LOOP ──────────────────────────────────────────────
+      var clock = new THREE.Clock();
+      var moveDir = new THREE.Vector3(),
+        fwd = new THREE.Vector3(),
+        rgt = new THREE.Vector3();
+      var stepTimer = 0;
+
+      renderer.setAnimationLoop(function () {
+        var dt = Math.min(clock.getDelta(), 0.05);
+        var t = clock.getElapsedTime();
+
+        // Camera
+        rig.rotation.y = camYaw;
+        camera.rotation.x = camPitch;
+
+        // WASD
+        var spd = 4 * dt;
+        fwd.set(0, 0, -1).applyEuler(new THREE.Euler(0, camYaw, 0));
+        rgt.set(1, 0, 0).applyEuler(new THREE.Euler(0, camYaw, 0));
+        moveDir.set(0, 0, 0);
+        if (keys.KeyW || keys.ArrowUp) moveDir.add(fwd);
+        if (keys.KeyS || keys.ArrowDown) moveDir.sub(fwd);
+        if (keys.KeyA || keys.ArrowLeft) moveDir.sub(rgt);
+        if (keys.KeyD || keys.ArrowRight) moveDir.add(rgt);
+        if (moveDir.lengthSq() > 0) {
+          moveDir.normalize().multiplyScalar(spd);
+          rig.position.add(moveDir);
+          rig.position.x = Math.max(-20, Math.min(20, rig.position.x));
+          rig.position.z = Math.max(-20, Math.min(8, rig.position.z));
+          rig.position.y = 1.6;
+          stepTimer += dt;
+          if (stepTimer > 0.4) {
+            stepTimer = 0;
+            beep(70, "sine", 0.04, 0.04);
+          }
+        }
+
+        // Gaze
+        var hovCard = getHitCard();
+        var hovBtn =
+          !G.locked && (winPanel.visible || overPanel.visible)
+            ? getHitBtn()
+            : false;
+        var hovTarget = hovCard >= 0 ? hovCard : hovBtn ? "btn" : -1;
+
+        if ((hovTarget !== -1 && !G.locked) || hovBtn) {
+          if (String(hovTarget) !== String(gazeIdx)) {
+            gazeTimer = 0;
+            gazeIdx = hovTarget;
+          }
+          gazeTimer += dt;
+          var pct = Math.min(gazeTimer / GAZE_T, 1);
+          // 2D arc
+          gazeArc2D &&
+            gazeArc2D.setAttribute(
+              "stroke-dasharray",
+              pct * ARC_C + " " + ARC_C,
+            );
+          // 3D gaze ring rebuild
+          gazeRingM.geometry.dispose();
+          gazeRingM.geometry = new THREE.RingGeometry(
+            0.022,
+            0.032,
+            32,
+            1,
+            0,
+            pct * Math.PI * 2,
+          );
+          gazeRingM.material.opacity = 0.9;
+          ringM.material.color.set(0xffcc44);
+          dotM.material.color.set(0xffcc44);
+          xhRing && xhRing.setAttribute("stroke", "#ffcc44");
+
+          if (gazeTimer >= GAZE_T) {
+            gazeTimer = 0;
+            gazeIdx = -1;
+            gazeArc2D &&
+              gazeArc2D.setAttribute("stroke-dasharray", "0 " + ARC_C);
+            gazeRingM.geometry.dispose();
+            gazeRingM.geometry = new THREE.RingGeometry(
+              0.022,
+              0.032,
+              32,
+              1,
+              0,
+              0,
+            );
+            gazeRingM.material.opacity = 0;
+            if (hovBtn) {
+              restart();
+            } else if (hovCard >= 0) {
+              onCard(hovCard);
+            }
+          }
+        } else {
+          gazeIdx = -1;
+          gazeTimer = 0;
+          gazeArc2D && gazeArc2D.setAttribute("stroke-dasharray", "0 " + ARC_C);
+          gazeRingM.geometry.dispose();
+          gazeRingM.geometry = new THREE.RingGeometry(
+            0.022,
+            0.032,
+            32,
+            1,
+            0,
+            0,
+          );
+          gazeRingM.material.opacity = 0;
+          ringM.material.color.set(0xf5d76e);
+          dotM.material.color.set(0xf5d76e);
+          xhRing && xhRing.setAttribute("stroke", "#f5d76e");
+        }
+        G.cards.forEach(function (c, i) {
+          c.hoverTarget =
+            i === hovCard && !c.matched && !c.flipped && !G.locked ? 0.15 : 0;
+        });
+
+        // Toast fade
+        if (toastTimer > 0) {
+          toastTimer -= dt;
+          toastMesh.material.opacity = Math.min(1, toastTimer * 0.5);
+        }
+
+        // Sparkles
+        sparkles.forEach(function (sp) {
+          sp.position.y = sp._base.y + Math.sin(t * sp._sp + sp._ph) * 0.12;
+        });
+        mL.intensity = 1.9 + Math.sin(t * 3.7) * 0.15;
+
+        // Cards
+        var now = Date.now();
+        G.cards.forEach(function (c) {
+          if (c._dropping && now > c._dropStart) {
+            c.grp.position.y += (c.basePos.y - c.grp.position.y) * 0.18;
+            if (Math.abs(c.grp.position.y - c.basePos.y) < 0.005) {
+              c.grp.position.y = c.basePos.y;
+              c._dropping = false;
+            }
+          }
+          c.hoverOff += (c.hoverTarget - c.hoverOff) * 0.15;
+          if (!c._dropping) c.grp.position.y = c.basePos.y + c.hoverOff;
+
+          if (Math.abs(c.flipAngle - c.flipTarget) > 0.004) {
+            c.flipAngle += (c.flipTarget - c.flipAngle) * 0.22;
+            c.grp.rotation.z = c.flipAngle;
+            var h = c.flipAngle % (Math.PI * 2);
+            var sf = h > Math.PI * 0.5 && h < Math.PI * 1.5;
+            c.bk.visible = !sf;
+            c.fr.visible = sf;
+          }
+          if (c.popVel !== 0 || Math.abs(c.popScale - 1) > 0.001) {
+            c.popVel -= (c.popScale - 1) * 0.35;
+            c.popVel *= 0.72;
+            c.popScale += c.popVel;
+            c.grp.scale.setScalar(c.popScale);
+          }
+          if (c.gw.material.opacity > 0) {
+            c.gw.material.opacity -= dt * 0.6;
+            if (c.gw.material.opacity < 0) c.gw.material.opacity = 0;
+          }
+          if (c.shakeTimer > 0) {
+            c.shakeTimer -= dt;
+            c.grp.position.x = c.basePos.x + Math.sin(c.shakeTimer * 60) * 0.07;
+            if (c.shakeTimer <= 0) c.grp.position.x = c.basePos.x;
+          }
+        });
+
+        renderer.render(scene, camera);
+      });
+
+      // ─── INIT ────────────────────────────────────────────────────────
+      buildCards();
+      drawHUD();
+      showToast(
+        "Bienvenido al Casino!",
+        "WASD=mover | Mira cartas 0.6s para voltear",
+        "#f5d76e",
+      );
+    </script>
+  </body>
+</html>
